@@ -1,0 +1,261 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+---
+title: "PML Project"
+output: html_document
+author: "Claudio Senatore"
+date: "10/05/2020"
+---
+ 
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+ 
+
+I HAVE DOWNLOADED THE TRAINING (pml-training) AND THE TESTING (pml-testing) FILES AND NOW I LOAD THEM IN R:
+
+ 
+```{r include=FALSE}
+library(corrplot)
+library(ggplot2)
+library(caret)
+library(magrittr)
+library(dplyr)
+library(randomForest)
+library(e1071)
+
+```
+
+```{r}
+training <- read.csv("pml-training.csv", header = TRUE, na.strings = c("NA",""))
+
+testing <- read.csv("pml-testing.csv", header = TRUE, na.strings = c("NA",""))
+
+str(training)
+
+#There are a lot of variables full of NA values
+
+```
+
+ 
+
+```{r}
+
+# Check the % of missing values per column
+
+(tmp = sapply(training, function(x) round(sum(is.na(x)/nrow(training)), 3))) # missing percentage per variable in the training dataset
+
+(tmp = sapply(training, function(x) round(sum(is.na(x)/nrow(training)), 3))) # missing percentage per variable in the testing dataset
+
+```
+
+ 
+
+```{r}
+
+#I create a training and a testing datasets with all the variables with NAs filtered off, also because either the percentage of NA is 0% or 97.6%. There are no intermediate cases. To do that I use dplyr and also magrittr
+
+ 
+
+not_any_na <- function(x) all(!is.na(x))
+
+ 
+
+training_filter_col<- training %>% select_if(not_any_na)
+
+ 
+
+testing_filter_col<- testing %>% select_if(not_any_na)
+
+ 
+
+#I now remove some meaningless variables
+
+ 
+
+removeVar <- c("new_window","X","user_name","cvtd_timestamp","raw_timestamp_part_1","raw_timestamp_part_2")#6The vector of variables to remove
+
+training_filter_col <- training_filter_col[,!(names(training_filter_col) %in% removeVar)]
+
+testing_filter_col <- testing_filter_col[,!(names(testing_filter_col) %in% removeVar)]
+
+ 
+
+```
+
+ 
+
+CREATION OF FINAL TRAINING AND VALIDATION DATASET PLUS CORRELATION ANALYSIS
+
+ 
+
+```{r}
+
+ 
+
+#Now the data set contains 54 variables, possible high correlation between some of them.
+
+ 
+
+#I now split the updated training dataset into a training dataset and a validation dataset (70% and 30% of the observations) in order to perform cross validation.
+
+ 
+
+inTrain = createDataPartition(y = training_filter_col$classe, p = 0.7, list = FALSE)
+
+training_sub_data <- training_filter_col[inTrain,]
+
+validation_sub_data <- training_filter_col[-inTrain,]
+
+```
+
+ 
+
+Correlation Analysis
+
+```{r}
+
+corMatrix<- cor(training_sub_data[, -54])
+
+corMatrix
+
+corrplot(corMatrix, order = "FPC", method = "color", type = "lower", tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+
+ 
+
+```
+
+ 
+
+MODEL FITTING AND TESTING
+
+ 
+
+```{r}
+
+#I try to reduce the dimensionality with a PCA
+
+ 
+
+preprocessing <- preProcess(training_sub_data[, -54], method = "pca", thresh = 0.99)#PCA needed 37 components to capture 99 percent of the variance
+
+trainPC <- predict(preprocessing, training_sub_data[, -54])
+
+valid_testPC <- predict(preprocessing,validation_sub_data[, -54])
+
+# add the "classe" as a factor into the trainPC and validatoion data
+
+trainPC <- data.frame(trainPC,  factor(training_sub_data$classe))
+
+valid_testPC <- data.frame(valid_testPC,  factor(validation_sub_data$classe))
+
+ 
+
+```
+
+ 
+
+```{r}
+
+#I train a random forest, I have tried with and without specifying Cross Validation method, the impact is only on the time needed not on the accuracy:
+
+ 
+
+modFit2 <- randomForest(factor.training_sub_data.classe. ~ ., data=trainPC,trControl = trainControl(method = "cv", number = 4), importance = TRUE, ntree= 1000)
+
+ 
+
+#I want to see the importance of each component:
+
+varImpPlot(modFit2, sort = TRUE, type = 1, pch = 19, col = 1, cex = 1, main = "Importance of the Individual Principal Components")
+
+ 
+
+modFit2
+
+```
+
+ 
+
+```{r}
+
+#The variable "classe" need to be converted in factor:
+training_sub_data$classe<-factor(training_sub_data$classe)
+
+#Now I apply a Random Forest directly on the dataset without preprocessing (no PCA):
+
+modFit3 <- randomForest(classe ~ ., data=training_sub_data,trControl = trainControl(method = "cv", number = 4), importance = TRUE, ntree= 1000)
+
+ 
+
+varImpPlot(modFit3, sort = TRUE, type = 1, pch = 19, col = 1, cex = 1, main = "Importance of Original Variables - No PCA")
+
+ 
+
+```
+
+ 
+
+```{r}
+
+#Out-of-Sample Error Estimate - Confusion Matrix of Random Forest model with Preprocessing PCA
+
+ 
+
+predPCA<- predict(modFit2, valid_testPC)
+
+confusPCA <- confusionMatrix(factor(validation_sub_data$classe), predPCA)
+
+confusPCA
+
+```
+
+```{r}
+
+#The Random Forest with preprocessing PCA accuracy estimated on the validation set is 97.85%
+
+accurPCA <- postResample(factor(validation_sub_data$classe), predPCA)
+
+modAccuracyPCA <- accurPCA[[1]]
+
+modAccuracyPCA
+
+```
+
+ 
+
+ 
+
+```{r}
+
+#Out-of-Sample Error Estimate - Confusion Matrix of Random Forest model without Preprocessing PCA
+
+predNoPCA<- predict(modFit3, validation_sub_data)
+
+confusNoPCA <- confusionMatrix(factor(validation_sub_data$classe), predNoPCA)
+
+confusNoPCA
+
+```
+
+ 
+
+```{r}
+
+#The Random Forest without preprocessing PCA accuracy estimated on the validation set is 99.40%
+
+accurNoPCA <- postResample(factor(validation_sub_data$classe), predNoPCA)
+
+modAccuracyNoPCA <- accurNoPCA[[1]]
+
+modAccuracyNoPCA
+
+ 
+
+```
